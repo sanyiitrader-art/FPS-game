@@ -1,0 +1,29 @@
+# Godot
+.godot/
+.import/
+*.translation
+export_credentials.cfg
+.mono/
+
+# Build output
+build/
+*.apk
+*.aab
+*.idsig
+
+# Signing material (never commit)
+*.keystore
+*.jks
+
+# CI-generated assets (created on every build from icon.png)
+assets/generated/*
+!assets/generated/.gitkeep
+
+# Python / editor / OS noise
+__pycache__/
+*.pyc
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

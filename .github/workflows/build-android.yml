@@ -1,0 +1,164 @@
+name: Build Android APK
+
+# Manual only: open the Actions tab, pick "Build Android APK", press "Run workflow".
+on:
+  workflow_dispatch:
+    inputs:
+      universal:
+        description: "Also build the universal APK (arm64 + arm32 in one file)"
+        type: boolean
+        default: true
+      debug_build:
+        description: "Use the debug export template (slower game, more diagnostics)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: build-android-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: "4.6.3"
+  GODOT_RELEASE: "stable"
+  GODOT_CACHE_DIR: /home/runner/godot-cache
+  ANDROID_SDK_ROOT: /home/runner/android-sdk
+  KEYSTORE_DIR: /home/runner/.quietfront
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Normalize line endings of tool scripts
+        run: |
+          # Files pasted from Windows editors may have CRLF endings, which break bash.
+          sed -i 's/\r$//' tools/*.sh tools/*.py
+
+      - name: Show runner resources
+        run: |
+          df -h /
+          free -h
+          nproc
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install pillow
+
+      - name: Validate project files
+        run: python tools/validate_project.py
+
+      - name: Restore debug keystore cache
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.quietfront
+          key: debug-keystore-v1
+
+      - name: Prepare test signing key
+        run: bash tools/make_debug_keystore.sh
+
+      - name: Restore Android SDK cache
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/android-sdk
+          key: android-sdk-${{ hashFiles('tools/setup_android.sh') }}
+
+      - name: Install Android SDK
+        run: bash tools/setup_android.sh
+
+      - name: Restore Godot cache
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/godot-cache
+          key: godot-${{ env.GODOT_VERSION }}-${{ env.GODOT_RELEASE }}-${{ hashFiles('tools/setup_godot.sh') }}
+
+      - name: Install Godot and Android export templates
+        run: bash tools/setup_godot.sh
+
+      - name: Generate launcher icons from icon.png
+        run: python tools/generate_icons.py
+
+      - name: Generate placeholder images
+        run: python tools/generate_placeholders.py
+
+      - name: Import assets
+        run: |
+          mkdir -p build
+          # Godot's first headless import sometimes returns a non-zero code; real
+          # problems are caught by the script check and by the export itself.
+          "$GODOT_BIN" --headless --path . --import 2>&1 | tee build/import.log || true
+
+      - name: Check scripts and run logic tests
+        run: bash tools/run_tests.sh
+
+      - name: Export APKs
+        env:
+          EXPORT_FLAG: ${{ inputs.debug_build && '--export-debug' || '--export-release' }}
+          SUFFIX: ${{ inputs.debug_build && '-debug' || '' }}
+          UNIVERSAL: ${{ inputs.universal }}
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          export_one() {
+            "$GODOT_BIN" --headless --path . "$EXPORT_FLAG" "$1" "$PWD/build/$2"
+            test -s "build/$2"
+          }
+          export_one "Android arm64" "quietfront-arm64-v8a${SUFFIX}.apk"
+          export_one "Android arm32" "quietfront-armeabi-v7a${SUFFIX}.apk"
+          if [ "$UNIVERSAL" = "true" ]; then
+            export_one "Android universal" "quietfront-universal${SUFFIX}.apk"
+          fi
+
+      - name: Report APK sizes
+        run: |
+          {
+            echo "### APK sizes"
+            echo
+            echo "| File | Size |"
+            echo "|---|---|"
+            for f in build/*.apk; do
+              printf '| %s | %s |\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          df -h /
+
+      - name: Upload arm64 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: quietfront-arm64-v8a
+          path: build/quietfront-arm64-v8a*.apk
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload arm32 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: quietfront-armeabi-v7a
+          path: build/quietfront-armeabi-v7a*.apk
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload universal APK
+        if: ${{ inputs.universal }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: quietfront-universal
+          path: build/quietfront-universal*.apk
+          retention-days: 14
+          if-no-files-found: error
