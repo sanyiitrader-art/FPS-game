@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#
 """Validate the repository before spending build time.
 
 Checks: required files for the current phase, icon.png, JSON data files, export presets,
