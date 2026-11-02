@@ -117,4 +117,8 @@ func _on_avatar() -> void:
 
 ## Called by the ScreenManager when the Android back button is pressed on this screen.
 func on_back() -> void:
-	Popups.confirm_quit_app(func() -> void: get_tree().quit())
+	Popups.confirm_quit_app(_quit_app)
+
+
+func _quit_app() -> void:
+	get_tree().quit()
